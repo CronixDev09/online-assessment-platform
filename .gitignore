@@ -1,0 +1,17 @@
+node_modules/
+dist/
+build/
+.env
+*.log
+
+# SQLite database + generated client
+backend/prisma/*.db
+backend/prisma/*.db-journal
+backend/prisma/migrations/
+
+# Judge temp workspace (created at runtime)
+judge-work/
+
+# OS
+Thumbs.db
+.DS_Store

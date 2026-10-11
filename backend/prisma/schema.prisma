@@ -1,0 +1,359 @@
+// Online Assessment Platform - data model
+// NOTE: This schema uses SQLite for zero-install local development. To move to
+// PostgreSQL for production, change `provider` to "postgresql" and set
+// DATABASE_URL accordingly. The models below are intentionally provider-agnostic.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         String   @default("CANDIDATE") // ADMIN | CANDIDATE
+  status       String   @default("ACTIVE") // ACTIVE | DISABLED
+  phone        String?
+  organization String?
+  candidateCode String? @unique
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  createdTests        Test[]               @relation("TestCreator")
+  assignments         TestAssignment[]
+  sessions            TestSession[]
+  notifications       Notification[]
+  refreshTokens       RefreshToken[]
+  passwordResetTokens PasswordResetToken[]
+  auditLogs           AuditLog[]
+}
+
+model RefreshToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Test {
+  id                    String    @id @default(cuid())
+  title                 String
+  description           String?
+  category              String?
+  instructions          String?
+  durationMinutes       Int       @default(60)
+  startAt               DateTime?
+  endAt                 DateTime?
+  totalMarks            Float     @default(0)
+  passingMarks          Float     @default(0)
+  negativeMarkingEnabled Boolean  @default(false)
+  randomizeQuestions    Boolean   @default(false)
+  randomizeOptions      Boolean   @default(false)
+  proctoringEnabled     Boolean   @default(true)
+  leaderboardEnabled    Boolean   @default(true)
+  autoSubmit            Boolean   @default(true)
+  resultVisibility      Boolean   @default(true)
+  showAnswerKey         Boolean   @default(false)
+  maxAttempts           Int       @default(1)
+  allowedLanguages      String    @default("python,java,cpp")
+  status                String    @default("DRAFT") // DRAFT | SCHEDULED | ACTIVE | COMPLETED | ARCHIVED
+  createdById           String
+  createdBy             User      @relation("TestCreator", fields: [createdById], references: [id])
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  testQuestions TestQuestion[]
+  assignments   TestAssignment[]
+  sessions      TestSession[]
+
+  @@index([status])
+}
+
+model Question {
+  id            String   @id @default(cuid())
+  type          String // MCQ | CODING
+  title         String
+  description   String?
+  difficulty    String   @default("MEDIUM") // EASY | MEDIUM | HARD
+  category      String?
+  tags          String?
+  marks         Float    @default(1)
+  negativeMarks Float    @default(0)
+  explanation   String?
+  status        String   @default("ACTIVE") // ACTIVE | ARCHIVED
+  createdById   String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  options       QuestionOption[]
+  coding        CodingQuestion?
+  testQuestions TestQuestion[]
+
+  @@index([type])
+  @@index([status])
+}
+
+model QuestionOption {
+  id          String  @id @default(cuid())
+  questionId  String
+  optionText  String
+  isCorrect   Boolean @default(false)
+  displayOrder Int    @default(0)
+  question    Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([questionId])
+}
+
+model CodingQuestion {
+  id              String  @id @default(cuid())
+  questionId      String  @unique
+  inputFormat     String?
+  outputFormat    String?
+  constraints     String?
+  sampleInput     String?
+  sampleOutput    String?
+  explanation     String?
+  timeLimitMs     Int     @default(2000)
+  memoryLimitMb   Int     @default(256)
+  maxCodeLength   Int     @default(20000)
+  allowedLanguages String @default("python,java,cpp")
+  question        Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  testCases CodingTestCase[]
+}
+
+model CodingTestCase {
+  id             String   @id @default(cuid())
+  questionId     String
+  inputData      String   @default("")
+  expectedOutput String
+  weight         Float    @default(1)
+  isHidden       Boolean  @default(true)
+  timeoutMs      Int      @default(2000)
+  createdAt      DateTime @default(now())
+  question       CodingQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@index([questionId])
+}
+
+model TestQuestion {
+  id           String  @id @default(cuid())
+  testId       String
+  questionId   String
+  displayOrder Int     @default(0)
+  marksOverride Float?
+  test         Test     @relation(fields: [testId], references: [id], onDelete: Cascade)
+  question     Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([testId, questionId])
+  @@index([testId])
+}
+
+model TestAssignment {
+  id          String   @id @default(cuid())
+  testId      String
+  candidateId String
+  assignedAt  DateTime @default(now())
+  status      String   @default("ASSIGNED") // ASSIGNED | COMPLETED | CANCELLED
+  test        Test     @relation(fields: [testId], references: [id], onDelete: Cascade)
+  candidate   User     @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@unique([testId, candidateId])
+  @@index([candidateId])
+}
+
+model TestSession {
+  id               String    @id @default(cuid())
+  testId           String
+  candidateId      String
+  attempt          Int       @default(1)
+  startedAt        DateTime  @default(now())
+  expiresAt        DateTime
+  submittedAt      DateTime?
+  submissionReason String? // CANDIDATE | TIME_EXPIRED | ADMIN_TERMINATED | DISQUALIFIED | SYSTEM
+  status           String    @default("IN_PROGRESS") // IN_PROGRESS | SUBMITTED | EXPIRED | TERMINATED | DISQUALIFIED
+  lastHeartbeatAt  DateTime?
+  disconnectCount  Int       @default(0)
+  createdAt        DateTime  @default(now())
+  test             Test      @relation(fields: [testId], references: [id], onDelete: Cascade)
+  candidate        User      @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  answers         CandidateAnswer[]
+  codeSubmissions CodeSubmission[]
+  violations      Violation[]
+  activityLogs    ActivityLog[]
+  result          Result?
+
+  @@index([testId, candidateId])
+  @@index([status])
+}
+
+model CandidateAnswer {
+  id               String   @id @default(cuid())
+  sessionId        String
+  questionId       String
+  selectedOptionIds String? // JSON array of option ids
+  answerText       String?
+  savedAt          DateTime @default(now())
+  version          Int      @default(1)
+  session          TestSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([sessionId, questionId])
+  @@index([sessionId])
+}
+
+model CodeSubmission {
+  id            String   @id @default(cuid())
+  sessionId     String
+  questionId    String
+  language      String
+  sourceCode    String
+  kind          String   @default("SUBMIT") // RUN | SAVE | SUBMIT
+  status        String   @default("PENDING") // ACCEPTED | WRONG_ANSWER | COMPILATION_ERROR | RUNTIME_ERROR | TIME_LIMIT_EXCEEDED | MEMORY_LIMIT_EXCEEDED | INTERNAL_ERROR | PENDING
+  score         Float    @default(0)
+  maxScore      Float    @default(0)
+  executionTime Int?
+  memoryUsed    Int?
+  passedCases   Int      @default(0)
+  totalCases    Int      @default(0)
+  compileOutput String?
+  submittedAt   DateTime @default(now())
+  session       TestSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  caseResults TestCaseResult[]
+
+  @@index([sessionId, questionId])
+}
+
+model TestCaseResult {
+  id            String   @id @default(cuid())
+  submissionId  String
+  testCaseId    String?
+  label         String?
+  isHidden      Boolean  @default(false)
+  status        String
+  executionTime Int?
+  memoryUsed    Int?
+  stdout        String?
+  stderr        String?
+  expected      String?
+  submission    CodeSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([submissionId])
+}
+
+model Result {
+  id                String   @id @default(cuid())
+  sessionId         String   @unique
+  candidateId       String
+  testId            String
+  mcqScore          Float    @default(0)
+  codingScore       Float    @default(0)
+  score             Float    @default(0)
+  maxScore          Float    @default(0)
+  percentage        Float    @default(0)
+  rank              Int?
+  passed            Boolean  @default(false)
+  timeTaken         Int      @default(0)
+  correctCount      Int      @default(0)
+  incorrectCount    Int      @default(0)
+  unansweredCount   Int      @default(0)
+  codingAttempted   Int      @default(0)
+  codingCasesPassed Int      @default(0)
+  codingCasesTotal  Int      @default(0)
+  violationCount    Int      @default(0)
+  details           String?  // JSON question-level breakdown
+  publishedAt       DateTime?
+  createdAt         DateTime @default(now())
+  session           TestSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([testId])
+  @@index([candidateId])
+}
+
+model Violation {
+  id          String   @id @default(cuid())
+  sessionId   String
+  candidateId String
+  testId      String
+  type        String
+  severity    String   @default("MEDIUM") // LOW | MEDIUM | HIGH | CRITICAL
+  description String?
+  metadata    String?  // JSON
+  timestamp   DateTime @default(now())
+  session     TestSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([testId])
+}
+
+model ActivityLog {
+  id          String    @id @default(cuid())
+  sessionId   String?
+  candidateId String?
+  eventType   String
+  severity    String?
+  metadata    String?   // JSON
+  ipAddress   String?
+  userAgent   String?
+  timestamp   DateTime  @default(now())
+  session     TestSession? @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@index([timestamp])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  title     String
+  message   String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String
+  action     String
+  entityType String?
+  entityId   String?
+  metadata   String?  // JSON
+  timestamp  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([timestamp])
+}
+
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
